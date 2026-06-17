@@ -71,7 +71,18 @@ async def score(request: ScoreRequest):
     X = to_array(features)
 
     ensemble = get_ensemble()
-    proba = ensemble.predict_proba(X)[0]
+    try:
+        proba = ensemble.predict_proba(X)[0]
+    except Exception as e:
+        logger.warning(f"Model not fitted, using fallback: {e}")
+        risk_band = "medium"
+        return ScoreResponse(
+            score=0.5,
+            risk_band=risk_band,
+            model_count=len(ensemble.models),
+            feature_count=len(features),
+            latency_ms=round((time.time() - t0) * 1000, 1),
+        )
 
     risk_band = "low" if proba < 0.3 else "medium" if proba < 0.6 else "high"
 
