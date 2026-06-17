@@ -12,5 +12,3 @@ COPY . .
 RUN mkdir -p /tmp/finu-models
 
 EXPOSE 8000
-
-ENTRYPOINT ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
