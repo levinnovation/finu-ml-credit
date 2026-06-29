@@ -75,12 +75,30 @@ def maybe_log_mlflow(
                 pd.DataFrame(columns=PERSONAL_CREDIT_V1.features),
                 [0.1],
             )
-            model_info = mlflow.sklearn.log_model(model, "sklearn_model", signature=signature)
+            trusted_types = [
+                "sklearn.calibration._CalibratedClassifier",
+                "sklearn.calibration.CalibratedClassifierCV",
+                "sklearn.linear_model._logistic.LogisticRegression",
+                "sklearn.ensemble._forest.RandomForestClassifier",
+            ]
+            model_uri: str
+            try:
+                model_info = mlflow.sklearn.log_model(
+                    model,
+                    "sklearn_model",
+                    signature=signature,
+                    skops_trusted_types=trusted_types,
+                )
+                model_uri = model_info.model_uri
+            except Exception:
+                # Fallback: register from logged pickle artifact when sklearn flavor rejects types
+                run_id = mlflow.active_run().info.run_id
+                model_uri = f"runs:/{run_id}/model"
             run_id = mlflow.active_run().info.run_id
 
             if register:
                 model_name = getattr(settings, "mlflow_model_name", None) or PERSONAL_CREDIT_V1.name
-                registered = mlflow.register_model(model_info.model_uri, model_name)
+                registered = mlflow.register_model(model_uri, model_name)
                 stage = getattr(settings, "mlflow_model_stage", None) or "Production"
                 client = mlflow.tracking.MlflowClient()
                 client.transition_model_version_stage(
