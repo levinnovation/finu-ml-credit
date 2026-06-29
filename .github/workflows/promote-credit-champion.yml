@@ -30,6 +30,7 @@ jobs:
           repository: levinnovation/fintech-saas
           path: fintech-saas
           ref: feat/platform-staging-ml
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
 
       - name: Checkout finu-platform-infra (artifact cache)
         uses: actions/checkout@v4
