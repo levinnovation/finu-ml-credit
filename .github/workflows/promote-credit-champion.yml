@@ -1,0 +1,74 @@
+name: Promote credit champion
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Deploy target
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+      push_to_railway:
+        description: Upload to finu-ml-credit via deploy-registry
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  train-and-promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout finu-ml-credit
+        uses: actions/checkout@v4
+
+      - name: Checkout fintech-saas (push script)
+        uses: actions/checkout@v4
+        with:
+          repository: levinnovation/fintech-saas
+          path: fintech-saas
+          ref: feat/platform-staging-ml
+
+      - name: Checkout finu-platform-infra (artifact cache)
+        uses: actions/checkout@v4
+        with:
+          repository: levinnovation/finu-platform-infra
+          path: infra
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Bootstrap champion
+        run: |
+          export PYTHONPATH="$PWD"
+          bash scripts/bootstrap_champion.sh
+
+      - name: Publish artifact cache
+        run: bash infra/scripts/publish-credit-champion-cache.sh
+
+      - name: Push to Railway
+        if: inputs.push_to_railway
+        env:
+          FINU_ML_CREDIT_URL: ${{ inputs.environment == 'production' && secrets.FINU_ML_CREDIT_URL_PRODUCTION || secrets.FINU_ML_CREDIT_URL_STAGING }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          chmod +x fintech-saas/scripts/push-credit-model-to-railway.sh
+          bash fintech-saas/scripts/push-credit-model-to-railway.sh
+
+      - name: Commit cache update (infra)
+        if: github.event_name == 'workflow_dispatch'
+        working-directory: infra
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add artifacts/credit-champion/
+          git diff --staged --quiet || git commit -m "chore(ml): refresh credit champion artifact cache"
+          git push || echo "No infra push permissions or nothing to commit"
