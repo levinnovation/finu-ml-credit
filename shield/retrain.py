@@ -62,6 +62,15 @@ def run_retrain(
         "recall": float(recall_score(y_test, preds, zero_division=0)),
     }
 
+    min_f1 = float(os.environ.get("SHIELD_PROMOTION_MIN_F1", "0.35"))
+    if metrics["f1"] < min_f1:
+        return {
+            "skipped": True,
+            "reason": "f1_below_minimum",
+            "metrics": metrics,
+            "required_f1": min_f1,
+        }
+
     if dry_run:
         return {
             "skipped": False,

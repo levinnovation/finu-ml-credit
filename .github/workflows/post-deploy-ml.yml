@@ -12,13 +12,16 @@ on:
           - staging
           - production
   schedule:
-    # Staging smoke every 30 minutes
+    # Staging smoke every 30 minutes; weekly retrain Sunday 04:30 UTC
     - cron: "*/30 * * * *"
+    - cron: "30 4 * * 0"
 
 jobs:
   heal-and-verify:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' && github.event.schedule == '*/30 * * * *')
     env:
       ENV_TARGET: ${{ github.event.inputs.environment || 'staging' }}
       FINU_ML_CREDIT_URL: ${{ (github.event.inputs.environment || 'staging') == 'production' && secrets.FINU_ML_CREDIT_URL_PRODUCTION || secrets.FINU_ML_CREDIT_URL_STAGING }}
@@ -48,3 +51,37 @@ jobs:
         run: |
           chmod +x infra/scripts/verify-credit-pipeline.sh
           bash infra/scripts/verify-credit-pipeline.sh
+
+      - name: Heal Shield if needed
+        continue-on-error: true
+        env:
+          ML_INTERNAL_SECRET: ${{ secrets.ML_INTERNAL_SECRET }}
+        run: |
+          chmod +x infra/scripts/heal-shield-ml-champion.sh
+          bash infra/scripts/heal-shield-ml-champion.sh
+
+      - name: Verify shield pipeline
+        continue-on-error: true
+        env:
+          SHIELD_WEBHOOK_SECRET: ${{ secrets.SHIELD_WEBHOOK_SECRET }}
+          ML_INTERNAL_SECRET: ${{ secrets.ML_INTERNAL_SECRET }}
+        run: |
+          chmod +x infra/scripts/verify-shield-pipeline.sh
+          bash infra/scripts/verify-shield-pipeline.sh
+
+  weekly-credit-retrain:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' && github.event.schedule == '30 4 * * 0'
+    env:
+      FINU_ML_CREDIT_URL: ${{ secrets.FINU_ML_CREDIT_URL_STAGING }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+    steps:
+      - name: Credit retrain (staging)
+        continue-on-error: true
+        run: |
+          curl -sf -X POST -H "x-cron-secret: ${CRON_SECRET}" \
+            "${FINU_ML_CREDIT_URL}/credit/retrain?dry_run=1" | python3 -m json.tool || true
+          curl -sf -X POST -H "x-cron-secret: ${CRON_SECRET}" \
+            "${FINU_ML_CREDIT_URL}/credit/retrain" | python3 -m json.tool || true
+          curl -sf -X POST -H "x-cron-secret: ${CRON_SECRET}" \
+            "${FINU_ML_CREDIT_URL}/credit/sync-mlflow" | python3 -m json.tool || true
