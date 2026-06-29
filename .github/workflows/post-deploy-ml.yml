@@ -1,0 +1,49 @@
+name: Post-deploy ML health
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+  schedule:
+    # Staging smoke every 30 minutes
+    - cron: "*/30 * * * *"
+
+jobs:
+  heal-and-verify:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    env:
+      ENV_TARGET: ${{ github.event.inputs.environment || 'staging' }}
+      FINU_ML_CREDIT_URL: ${{ (github.event.inputs.environment || 'staging') == 'production' && secrets.FINU_ML_CREDIT_URL_PRODUCTION || secrets.FINU_ML_CREDIT_URL_STAGING }}
+      FINU_ML_CREDIT: ${{ (github.event.inputs.environment || 'staging') == 'production' && secrets.FINU_ML_CREDIT_URL_PRODUCTION || secrets.FINU_ML_CREDIT_URL_STAGING }}
+      FINU_WEB: ${{ (github.event.inputs.environment || 'staging') == 'production' && secrets.FINU_WEB_PRODUCTION || secrets.FINU_WEB_STAGING }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      SEED_EMAIL: ${{ secrets.SEED_EMAIL }}
+      SEED_PASSWORD: ${{ secrets.SEED_PASSWORD }}
+    steps:
+      - name: Checkout finu-ml-credit
+        uses: actions/checkout@v4
+
+      - name: Checkout finu-platform-infra
+        uses: actions/checkout@v4
+        with:
+          repository: levinnovation/finu-platform-infra
+          path: infra
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Heal champion if needed
+        run: |
+          chmod +x infra/scripts/heal-credit-ml-champion.sh
+          bash infra/scripts/heal-credit-ml-champion.sh
+
+      - name: Verify credit pipeline
+        run: |
+          chmod +x infra/scripts/verify-credit-pipeline.sh
+          bash infra/scripts/verify-credit-pipeline.sh
