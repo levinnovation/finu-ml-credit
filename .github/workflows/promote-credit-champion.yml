@@ -36,7 +36,7 @@ jobs:
         with:
           repository: levinnovation/finu-platform-infra
           path: infra
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.INFRA_REPO_TOKEN }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
