@@ -39,6 +39,7 @@ jobs:
           token: ${{ secrets.INFRA_REPO_TOKEN }}
 
       - name: Heal champion if needed
+        continue-on-error: true
         run: |
           chmod +x infra/scripts/heal-credit-ml-champion.sh
           bash infra/scripts/heal-credit-ml-champion.sh
