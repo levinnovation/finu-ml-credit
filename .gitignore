@@ -4,3 +4,8 @@ __pycache__/
 .env
 /tmp/
 *.pkl
+.venv-train/
+data/synthetic/
+mlruns/
+mlflow.db
+*.log
