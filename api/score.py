@@ -7,8 +7,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from config import settings
-from pipeline.features import compute_features, to_array
-from pipeline.schemas import get_schema
+from pipeline.features import compute_corporate_features, compute_features, to_array
+from pipeline.schemas import CORPORATE_CREDIT_V1, PERSONAL_CREDIT_V1, get_schema
 from models.registry import get_champion
 from ml.explain import compute_shap_top_features
 
@@ -19,6 +19,10 @@ router = APIRouter(prefix="/score", tags=["scoring"])
 class ScoreRequest(BaseModel):
     tenant_id: str = Field(..., description="Tenant/workspace identifier")
     cedula: str = Field(..., description="Customer national ID")
+    customer_type: str = Field(
+        default="personal",
+        description="'personal' or 'corporate' -- selects the champion model and feature schema",
+    )
     application: dict = Field(default_factory=dict, description="Credit application fields")
     credit_data: Optional[dict] = Field(default=None, description="Credit bureau data (Equifax)")
     behavior_data: Optional[dict] = Field(default=None, description="Transaction behavior data")
@@ -51,15 +55,21 @@ class ScoreResponse(BaseModel):
 async def score(request: ScoreRequest):
     t0 = time.time()
 
-    features = compute_features(
-        request.application,
-        credit_data=request.credit_data,
-        behavior_data=request.behavior_data,
-    )
-    X = to_array(features)
+    is_corporate = request.customer_type == "corporate"
+    model_name = CORPORATE_CREDIT_V1.name if is_corporate else PERSONAL_CREDIT_V1.name
 
-    champion = get_champion()
+    if is_corporate:
+        features = compute_corporate_features(request.application)
+    else:
+        features = compute_features(
+            request.application,
+            credit_data=request.credit_data,
+            behavior_data=request.behavior_data,
+        )
+
+    champion = get_champion(model_name)
     schema = get_schema(champion.feature_schema_version)
+    X = to_array(features, schema.features)
     if not champion.loaded:
         return ScoreResponse(
             model_name=champion.name,

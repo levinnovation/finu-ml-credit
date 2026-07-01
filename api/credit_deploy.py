@@ -63,9 +63,15 @@ async def deploy_registry(
     manifest["champion"] = _basename(manifest.get("champion"))
     manifest["challenger"] = _basename(manifest.get("challenger"))
     manifest["models"] = [_basename(m) for m in manifest.get("models", [])]
+    if isinstance(manifest.get("champions"), dict):
+        manifest["champions"] = {k: _basename(v) for k, v in manifest["champions"].items()}
+    if isinstance(manifest.get("challengers"), dict):
+        manifest["challengers"] = {k: _basename(v) for k, v in manifest["challengers"].items()}
 
-    for key in ("champion", "challenger"):
-        entry = manifest.get(key)
+    entries_to_check = [manifest.get("champion"), manifest.get("challenger")]
+    entries_to_check += list((manifest.get("champions") or {}).values())
+    entries_to_check += list((manifest.get("challengers") or {}).values())
+    for entry in entries_to_check:
         if entry and entry.get("artifact_path"):
             p = cache_dir / entry["artifact_path"]
             if not p.exists():

@@ -39,11 +39,12 @@ def _check_cron_auth(x_cron_secret: Optional[str]) -> None:
 async def credit_retrain(
     dry_run: bool = False,
     source: str = Query(default="supabase", description="supabase labels from credit_decisions"),
+    customer_type: str = Query(default="personal", description="personal | corporate"),
     x_cron_secret: Optional[str] = Header(default=None, alias="x-cron-secret"),
 ):
     _check_cron_auth(x_cron_secret)
     try:
-        result = run_credit_retrain(dry_run=dry_run, source=source)
+        result = run_credit_retrain(dry_run=dry_run, source=source, customer_type=customer_type)
         return CreditRetrainResponse(**result)
     except RuntimeError as e:
         logger.warning("credit/retrain skipped: %s", e)
