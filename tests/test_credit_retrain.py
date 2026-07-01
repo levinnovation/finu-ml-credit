@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from credit import retrain as credit_retrain
+from credit.loader_pg import LabelProvenance
 from ml.metrics import passes_promotion_gate
 
 
@@ -40,7 +41,8 @@ def test_run_credit_retrain_dry_run(mock_count, mock_load, mock_champion):
     rng = np.random.default_rng(42)
     X = rng.random((250, 14))
     y = (rng.random(250) > 0.7).astype(int)
-    mock_load.return_value = (X, y)
+    provenance = LabelProvenance(verified_outcome=0, decision_proxy=250)
+    mock_load.return_value = (X, y, provenance)
     champ = MagicMock()
     champ.loaded = False
     champ.metrics = None
@@ -51,3 +53,15 @@ def test_run_credit_retrain_dry_run(mock_count, mock_load, mock_champion):
     assert result["dry_run"] is True
     assert "metrics" in result
     assert "promotion" in result
+    assert result["label_provenance"] == {
+        "label_verified_outcome_count": 0,
+        "label_decision_proxy_count": 250,
+        "label_verified_pct": 0.0,
+    }
+
+
+def test_label_provenance_graduates_when_fully_verified():
+    all_verified = LabelProvenance(verified_outcome=250, decision_proxy=0)
+    assert all_verified.verified_pct == 1.0
+    mixed = LabelProvenance(verified_outcome=10, decision_proxy=240)
+    assert mixed.verified_pct == 0.04

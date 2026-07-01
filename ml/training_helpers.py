@@ -52,6 +52,7 @@ def maybe_log_mlflow(
     dataset_uri: str,
     artifact_path: Path,
     register: bool = True,
+    extra_params: dict | None = None,
 ) -> str | None:
     if not settings.mlflow_tracking_uri:
         return None
@@ -66,6 +67,7 @@ def maybe_log_mlflow(
             mlflow.log_params({
                 "model_type": name,
                 "feature_schema_version": PERSONAL_CREDIT_V1.version,
+                **(extra_params or {}),
             })
             mlflow.log_metrics({k: v for k, v in metrics.items() if v is not None})
             mlflow.set_tag("dataset_uri", dataset_uri)
