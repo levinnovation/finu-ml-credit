@@ -6,10 +6,15 @@ import time
 from pathlib import Path
 
 from config import settings
-from pipeline.schemas import PERSONAL_CREDIT_V1
+from pipeline.schemas import FeatureSchema, PERSONAL_CREDIT_V1
 
 
-def build_candidates():
+def build_candidates(schema: FeatureSchema = PERSONAL_CREDIT_V1):
+    """Build candidate estimators. `schema` determines the LightGBM/XGBoost
+    monotone_constraints vector -- it MUST match the feature vector's length
+    and order (schema.features), or training fails with a native LightGBM
+    error ("num_total_features == monotone_constraints.size"). Defaults to
+    personal_v1 for backward compatibility with existing callers."""
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.linear_model import LogisticRegression
 
@@ -19,7 +24,7 @@ def build_candidates():
     }
     try:
         import lightgbm as lgb
-        constraints = [PERSONAL_CREDIT_V1.monotone_constraints.get(f, 0) for f in PERSONAL_CREDIT_V1.features]
+        constraints = [schema.monotone_constraints.get(f, 0) for f in schema.features]
         candidates["lightgbm"] = lgb.LGBMClassifier(
             objective="binary",
             metric="auc",
@@ -32,7 +37,7 @@ def build_candidates():
         pass
     try:
         import xgboost as xgb
-        constraints = tuple(PERSONAL_CREDIT_V1.monotone_constraints.get(f, 0) for f in PERSONAL_CREDIT_V1.features)
+        constraints = tuple(schema.monotone_constraints.get(f, 0) for f in schema.features)
         candidates["xgboost"] = xgb.XGBClassifier(
             objective="binary:logistic",
             eval_metric="auc",
@@ -53,6 +58,7 @@ def maybe_log_mlflow(
     artifact_path: Path,
     register: bool = True,
     extra_params: dict | None = None,
+    schema: FeatureSchema = PERSONAL_CREDIT_V1,
 ) -> str | None:
     if not settings.mlflow_tracking_uri:
         return None
@@ -62,19 +68,19 @@ def maybe_log_mlflow(
         from mlflow.models import infer_signature
 
         mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
-        mlflow.set_experiment("finu-credit-default-personal")
+        mlflow.set_experiment(f"finu-credit-default-{schema.name.rsplit('_', 1)[-1]}")
         with mlflow.start_run(run_name=f"{name}-{int(time.time())}"):
             mlflow.log_params({
                 "model_type": name,
-                "feature_schema_version": PERSONAL_CREDIT_V1.version,
+                "feature_schema_version": schema.version,
                 **(extra_params or {}),
             })
             mlflow.log_metrics({k: v for k, v in metrics.items() if v is not None})
             mlflow.set_tag("dataset_uri", dataset_uri)
-            mlflow.set_tag("model_name", PERSONAL_CREDIT_V1.name)
+            mlflow.set_tag("model_name", schema.name)
             mlflow.log_artifact(str(artifact_path), artifact_path="model")
             signature = infer_signature(
-                pd.DataFrame(columns=PERSONAL_CREDIT_V1.features),
+                pd.DataFrame(columns=schema.features),
                 [0.1],
             )
             trusted_types = [
@@ -99,7 +105,7 @@ def maybe_log_mlflow(
             run_id = mlflow.active_run().info.run_id
 
             if register:
-                model_name = getattr(settings, "mlflow_model_name", None) or PERSONAL_CREDIT_V1.name
+                model_name = getattr(settings, "mlflow_model_name", None) or schema.name
                 registered = mlflow.register_model(model_uri, model_name)
                 stage = getattr(settings, "mlflow_model_stage", None) or "Production"
                 client = mlflow.tracking.MlflowClient()

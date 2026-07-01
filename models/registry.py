@@ -14,7 +14,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from config import settings
-from pipeline.schemas import PERSONAL_CREDIT_V1
+from pipeline.schemas import CORPORATE_CREDIT_V1, PERSONAL_CREDIT_V1
+
+# Default (empty-champion) feature schema version per model name, used when
+# the manifest has no entry for that model at all.
+_DEFAULT_SCHEMA_BY_MODEL = {
+    PERSONAL_CREDIT_V1.name: PERSONAL_CREDIT_V1.version,
+    CORPORATE_CREDIT_V1.name: CORPORATE_CREDIT_V1.version,
+}
 
 
 @dataclass(frozen=True)
@@ -47,13 +54,13 @@ def registry_path() -> Path:
     return Path(settings.model_cache_dir) / "model_registry.json"
 
 
-def empty_champion() -> RegistryModel:
+def empty_champion(model_name: str = PERSONAL_CREDIT_V1.name) -> RegistryModel:
     return RegistryModel(
-        name="credit_default_personal",
+        name=model_name,
         stage="champion",
         version=settings.model_version,
         model_type="unavailable",
-        feature_schema_version=PERSONAL_CREDIT_V1.version,
+        feature_schema_version=_DEFAULT_SCHEMA_BY_MODEL.get(model_name, PERSONAL_CREDIT_V1.version),
         mlflow_run_id=settings.mlflow_run_id or None,
         artifact_path=None,
         metrics={},
@@ -119,23 +126,66 @@ def _model_from_manifest(raw: Optional[Dict[str, Any]], default_stage: str) -> R
     )
 
 
-def get_champion() -> RegistryModel:
-    return _model_from_manifest(load_manifest().get("champion"), "champion")
+def get_champion(model_name: str = PERSONAL_CREDIT_V1.name) -> RegistryModel:
+    """Look up the champion for `model_name` (e.g. "credit_default_personal"
+    or "credit_default_corporate").
+
+    Manifest formats supported (newest first):
+      - {"champions": {"<model_name>": {...}, ...}, ...} -- per-type
+        champions, written by scripts/train_credit_default.py --schema.
+      - {"champion": {...}, ...} -- legacy single-champion format, predates
+        corporate support. Treated as the personal_v1 champion only.
+    """
+    manifest = load_manifest()
+    champions = manifest.get("champions")
+    if isinstance(champions, dict) and model_name in champions:
+        return _model_from_manifest(champions[model_name], "champion")
+    if model_name == PERSONAL_CREDIT_V1.name:
+        return _model_from_manifest(manifest.get("champion"), "champion")
+    return empty_champion(model_name)
 
 
-def get_challenger() -> Optional[RegistryModel]:
-    raw = load_manifest().get("challenger")
+def get_challenger(model_name: str = PERSONAL_CREDIT_V1.name) -> Optional[RegistryModel]:
+    manifest = load_manifest()
+    challengers = manifest.get("challengers")
+    if isinstance(challengers, dict):
+        raw = challengers.get(model_name)
+        return _model_from_manifest(raw, "challenger") if raw else None
+    if model_name != PERSONAL_CREDIT_V1.name:
+        return None
+    raw = manifest.get("challenger")
     if not raw:
         return None
     return _model_from_manifest(raw, "challenger")
+
+
+def _champion_summary(m: RegistryModel) -> Dict[str, Any]:
+    return {
+        "name": m.name,
+        "stage": m.stage,
+        "version": m.version,
+        "model_type": m.model_type,
+        "feature_schema_version": m.feature_schema_version,
+        "mlflow_run_id": m.mlflow_run_id,
+        "artifact_path": m.artifact_path,
+        "metrics": m.metrics,
+        "thresholds": m.thresholds,
+        "loaded": m.loaded,
+        "data_source": m.data_source,
+    }
 
 
 def list_registry_models() -> Dict[str, Any]:
     manifest = load_manifest()
     champion = get_champion()
     challenger = get_challenger()
+    corporate_champion = get_champion(CORPORATE_CREDIT_V1.name)
     return {
         "registry_path": str(registry_path()),
+        "champions_by_model": {
+            PERSONAL_CREDIT_V1.name: _champion_summary(champion),
+            CORPORATE_CREDIT_V1.name: _champion_summary(corporate_champion),
+        },
         "champion": {
             "name": champion.name,
             "stage": champion.stage,

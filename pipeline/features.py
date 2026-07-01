@@ -102,8 +102,59 @@ def compute_features(
     return features
 
 
-def to_array(features: Optional[Dict[str, float]]) -> np.ndarray:
-    """Convert feature dict to numpy array in canonical order."""
+def to_array(features: Optional[Dict[str, float]], feature_names: Optional[list] = None) -> np.ndarray:
+    """Convert feature dict to numpy array in canonical order.
+
+    `feature_names` defaults to the personal_v1 order for backward
+    compatibility; pass CORPORATE_CREDIT_V1.features (or any schema's
+    feature list) to serialize a different feature vector shape.
+    """
+    names = feature_names or FEATURE_NAMES
     if not features:
-        return np.zeros((1, len(FEATURE_NAMES)))
-    return np.array([[features.get(k, 0.0) for k in FEATURE_NAMES]])
+        return np.zeros((1, len(names)))
+    return np.array([[features.get(k, 0.0) for k in names]])
+
+
+def compute_corporate_features(application: Dict[str, Any]) -> Dict[str, float]:
+    """Compute the corporate_v1 feature vector (see pipeline/schemas.py's
+    CORPORATE_CREDIT_V1) from raw company financials.
+
+    `application` fields (all optional, default to a conservative/neutral
+    value so a partially-filled corporate application still scores rather
+    than crashing):
+      monthly_sales, ebitda_annual, current_assets, current_liabilities,
+      total_assets, total_liabilities, years_in_business, amount,
+      active_debts, worst_delay_days
+    """
+    monthly_sales = float(application.get("monthly_sales", 0) or 0)
+    ebitda_annual = float(application.get("ebitda_annual", 0) or 0)
+    current_assets = float(application.get("current_assets", 0) or 0)
+    current_liabilities = float(application.get("current_liabilities", 0) or 0)
+    total_assets = float(application.get("total_assets", 0) or 0)
+    total_liabilities = float(application.get("total_liabilities", 0) or 0)
+    years_in_business = float(application.get("years_in_business", 0) or 0)
+    amount = float(application.get("amount", 0) or 0)
+    active_debts = int(application.get("active_debts", 0) or 0)
+    worst_delay_days = int(application.get("worst_delay_days", 0) or 0)
+
+    equity = max(total_assets - total_liabilities, 1.0)
+    current_ratio = current_assets / max(current_liabilities, 1.0)
+    debt_to_equity = total_liabilities / equity
+    # Approximate annual debt service as 20% of total liabilities (no
+    # amortization schedule available at scoring time) -- a conservative
+    # proxy so EBITDA coverage still moves sensibly with leverage.
+    approx_annual_debt_service = max(total_liabilities * 0.2, 1.0)
+    ebitda_coverage = ebitda_annual / approx_annual_debt_service
+    loan_to_sales = amount / max(monthly_sales * 12, 1.0)
+
+    return {
+        "monthly_sales": monthly_sales,
+        "ebitda_annual": ebitda_annual,
+        "current_ratio": min(current_ratio, 50.0),
+        "debt_to_equity": min(max(debt_to_equity, -50.0), 50.0),
+        "ebitda_coverage": min(max(ebitda_coverage, -50.0), 50.0),
+        "years_in_business": years_in_business,
+        "loan_to_sales": min(loan_to_sales, 20.0),
+        "active_debts": float(active_debts),
+        "worst_delay_days": float(worst_delay_days),
+    }
