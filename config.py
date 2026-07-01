@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     mlflow_model_stage: str = Field(default="Production", alias="MLFLOW_MODEL_STAGE")
     cron_secret: str = Field(default="", alias="CRON_SECRET")
     ml_internal_secret: str = Field(default="", alias="ML_INTERNAL_SECRET")
+    # Comma-separated list of allowed CORS origins. This service is called
+    # server-to-server from fintech-saas's Next.js API routes, not directly
+    # from a browser, so the default is intentionally narrow. "*" is only
+    # honored when debug=True (local dev).
+    cors_allowed_origins: str = Field(
+        default="https://fintech-saas-production.up.railway.app,https://fintech-saas-staging.up.railway.app",
+        alias="CORS_ALLOWED_ORIGINS",
+    )
 
     class Config:
         env_file = ".env"
