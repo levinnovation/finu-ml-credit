@@ -40,8 +40,6 @@ def test_eligibility_endpoint_fallback_reports_data_source_none(monkeypatch):
     import api.eligibility as eligibility_mod
 
     monkeypatch.setattr(eligibility_mod, "load_model", lambda name: None)
-    monkeypatch.setattr(eligibility_mod, "_model", None)
-    monkeypatch.setattr(eligibility_mod, "_model_available", False)
 
     client = TestClient(app)
     resp = client.post(

@@ -176,6 +176,81 @@ class LabelProvenance:
         }
 
 
+def load_pg_eligibility_labels(
+    min_rows: int = 200,
+    tenant_id: Optional[str] = None,
+    limit: int = 50_000,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Real feature vectors from credit_decisions, labeled by applying the
+    deterministic hard_rule_check() (models/eligibility.py) to each one.
+
+    Unlike load_pg_labels' default-risk proxy label, this is NOT an
+    approximation: hard_rule_check is a pure function of the features, so the
+    label is exactly correct by construction. The point of training a model
+    on it is to let a LightGBM classifier generalize the hard-rule boundary
+    smoothly over the REAL feature distribution seen in production (instead
+    of only the synthetic distribution used by training/train_eligibility_model.py),
+    which should behave better on borderline real applicants than either the
+    hard rules alone or a synthetic-only model.
+    """
+    from models.eligibility import hard_rule_check
+
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            clauses = ["customer_type = 'personal'"]
+            params: list = []
+            if tenant_id:
+                clauses.append("tenant_id = %s::uuid")
+                params.append(tenant_id)
+            params.append(limit)
+            sql = f"""
+                SELECT application_context_snapshot, external_checks_snapshot
+                FROM credit_decisions
+                WHERE {' AND '.join(clauses)}
+                ORDER BY decided_at DESC
+                LIMIT %s
+            """
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    if len(rows) < min_rows:
+        raise RuntimeError(f"Need >= {min_rows} credit_decisions rows, got {len(rows)}")
+
+    features_list = []
+    labels = []
+    for app_snap, ext_snap in rows:
+        app = app_snap if isinstance(app_snap, dict) else json.loads(app_snap or "{}")
+        ext = ext_snap if isinstance(ext_snap, dict) else json.loads(ext_snap or "{}")
+        personal = app.get("personal") or {}
+        application = {
+            "monthly_income": personal.get("ingresoMensualDeclarado") or personal.get("monthly_income") or 0,
+            "amount": personal.get("montoSolicitado") or personal.get("amount") or 0,
+            "term_months": personal.get("plazoMeses") or personal.get("term_months") or 12,
+            "age": personal.get("age") or 35,
+            "employment_months": personal.get("employment_months") or 24,
+            "employment_type": personal.get("employment_type") or "asalariado",
+        }
+        credit_data = {}
+        equifax = ext.get("equifax") or {}
+        if equifax:
+            credit_data = {
+                "score": equifax.get("score") or equifax.get("puntaje") or 650,
+                "active_debts": equifax.get("active_debts") or 0,
+                "worst_delay_days": equifax.get("worst_delay_days") or 0,
+            }
+        feat = compute_features(application, credit_data=credit_data)
+        passes, _reasons = hard_rule_check(feat)
+        features_list.append([feat[k] for k in PERSONAL_CREDIT_V1.features])
+        labels.append(1 if passes else 0)
+
+    X = np.asarray(features_list, dtype=float)
+    y = np.asarray(labels, dtype=int)
+    return X, y
+
+
 def export_labels_csv(output_path: str, tenant_id: Optional[str] = None, limit: int = 50_000) -> int:
     """Export training CSV with personal_v1 features + defaulted label."""
     X, y, _provenance = load_pg_labels(min_rows=1, tenant_id=tenant_id, limit=limit)
