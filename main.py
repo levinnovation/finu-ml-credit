@@ -19,6 +19,7 @@ from api.credit_retrain import router as credit_retrain_router
 from api.credit_deploy import router as credit_deploy_router
 from api.eligibility import router as eligibility_router
 from api.eligibility_retrain import router as eligibility_retrain_router
+from api.ocr import router as ocr_router
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -62,3 +63,4 @@ app.include_router(credit_retrain_router)
 app.include_router(credit_deploy_router)
 app.include_router(eligibility_router)
 app.include_router(eligibility_retrain_router)
+app.include_router(ocr_router)

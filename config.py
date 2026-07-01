@@ -30,6 +30,14 @@ class Settings(BaseSettings):
     mlflow_model_stage: str = Field(default="Production", alias="MLFLOW_MODEL_STAGE")
     cron_secret: str = Field(default="", alias="CRON_SECRET")
     ml_internal_secret: str = Field(default="", alias="ML_INTERNAL_SECRET")
+    litellm_base_url: str = Field(default="", alias="LITELLM_BASE_URL")
+    litellm_api_key: str = Field(default="", alias="LITELLM_API_KEY")
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
+    deepinfra_api_key: str = Field(default="", alias="DEEPINFRA_API_KEY")
+    ocr_vlm_model: str = Field(
+        default="deepseek-ai/DeepSeek-V3.2",
+        alias="OCR_VLM_MODEL",
+    )
     # Comma-separated list of allowed CORS origins. This service is called
     # server-to-server from fintech-saas's Next.js API routes, not directly
     # from a browser, so the default is intentionally narrow. "*" is only
