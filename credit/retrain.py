@@ -49,7 +49,7 @@ def run_credit_retrain(
             "required": min_labels,
         }
 
-    X, y = load_pg_labels(min_rows=min_labels, tenant_id=tenant_id)
+    X, y, label_provenance = load_pg_labels(min_rows=min_labels, tenant_id=tenant_id)
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.25, random_state=42, stratify=y if len(np.unique(y)) > 1 else None
     )
@@ -85,6 +85,7 @@ def run_credit_retrain(
             "train_rows": int(X_train.shape[0]),
             "test_rows": int(X_test.shape[0]),
             "promotion": best["promotion"],
+            "label_provenance": label_provenance.as_dict(),
         }
 
     if not best["promotion"]["accepted"]:
@@ -107,8 +108,19 @@ def run_credit_retrain(
         best["metrics"],
         f"credit_decisions:{X.shape[0]}",
         artifact,
+        extra_params=label_provenance.as_dict(),
     )
 
+    # Once every training row has a verified credit_outcomes row (see
+    # migrations/036_credit_outcomes.sql), this graduates to
+    # "production_decisions" -- until then it stays labeled as a mix so
+    # nobody downstream mistakes a proxy-label model for one trained on
+    # verified performance.
+    data_source = (
+        "production_decisions"
+        if label_provenance.verified_outcome == label_provenance.total
+        else "production_decisions_proxy_label"
+    )
     entry = {
         "name": PERSONAL_CREDIT_V1.name,
         "stage": "champion",
@@ -120,10 +132,8 @@ def run_credit_retrain(
         "metrics": best["metrics"],
         "thresholds": {"low_pd": 0.30, "medium_pd": 0.60},
         "promotion": best["promotion"],
-        # Real credit_decisions rows, but the label is `final_action == 'decline'`
-        # (a decision proxy), not a verified post-origination default outcome.
-        # See docs/data-schema-cr.md and Fase 3 of the Credit Intelligence plan.
-        "data_source": "production_decisions_proxy_label",
+        "data_source": data_source,
+        "label_provenance": label_provenance.as_dict(),
     }
 
     manifest = {"champion": entry, "challenger": None, "models": [entry]}
@@ -140,4 +150,6 @@ def run_credit_retrain(
         "registry_path": str(reg),
         "train_rows": int(X_train.shape[0]),
         "mlflow_run_id": run_id,
+        "data_source": data_source,
+        "label_provenance": label_provenance.as_dict(),
     }
