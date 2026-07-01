@@ -1,9 +1,9 @@
 # Training-only extras NOT already in requirements.txt (mlflow, lightgbm,
-# xgboost, etc. are already part of the base serving requirements).
+# xgboost, shap, etc. are already part of the base serving requirements --
+# shap moved there since api/score.py now computes real per-instance SHAP
+# at serving time, not just during training).
 # Install with: pip install -r requirements.txt -r requirements-train.txt
 -r requirements.txt
-
-shap>=0.46.0
 
 # Tabular foundation models, evaluated for the credit ensemble but not
 # currently wired into models/registry.py's champion pattern -- see
