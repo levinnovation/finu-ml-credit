@@ -162,3 +162,62 @@ def test_models_reports_data_source_field(empty_registry_client):
     resp = empty_registry_client.get("/models")
     body = resp.json()
     assert body["champion"]["data_source"] == "none"
+
+
+# ─── Cross-repo field contract ────────────────────────────────────────────────
+#
+# apps/fintech-saas's lib/credit/ml-client.ts (callRemoteML) and
+# lib/credit/types.ts (CreditMLScoreResponse) destructure these EXACT field
+# names from /score's JSON body. Since the two repos can't share a type
+# definition, this test is the tripwire: if a field gets renamed here without
+# a matching change on the fintech-saas side, this test still passes (it only
+# knows about this repo) but at least documents the contract in one place a
+# reviewer can diff against apps/fintech-saas/lib/credit/ml-client.ts.
+SCORE_FIELDS_CONSUMED_BY_FINTECH_SAAS = {
+    "score",
+    "probability_default",
+    "model_available",
+    "model_version",
+    "mlflow_run_id",
+    "feature_schema_version",
+    "calibration_version",
+    "decision_thresholds",
+    "feature_values",
+    "feature_count",
+    "latency_ms",
+    "data_source",
+    "top_features",
+    # NOTE: "shap_values" is NOT in ScoreResponse (api/score.py) -- ml-client.ts
+    # reads `data.shap_values ?? {}` and tolerates its absence. Documented here
+    # so nobody "fixes" this by adding shap_values without checking both sides.
+}
+
+ELIGIBILITY_FIELDS_CONSUMED_BY_FINTECH_SAAS = {
+    "eligible",
+    "reasons",
+    "confidence",
+    "source",
+    "model_available",
+    "latency_ms",
+    "data_source",
+}
+
+
+def test_score_response_contains_every_field_fintech_saas_reads(empty_registry_client):
+    resp = empty_registry_client.post(
+        "/score",
+        json={"tenant_id": "t-1", "cedula": "1-1111-1111", "application": {}},
+    )
+    body = resp.json()
+    missing = SCORE_FIELDS_CONSUMED_BY_FINTECH_SAAS - set(body.keys())
+    assert not missing, f"fintech-saas's ml-client.ts expects these fields on /score: {missing}"
+
+
+def test_eligibility_response_contains_every_field_fintech_saas_reads(empty_registry_client):
+    resp = empty_registry_client.post(
+        "/eligibility",
+        json={"tenant_id": "t-1", "cedula": "1-1111-1111", "application": {}},
+    )
+    body = resp.json()
+    missing = ELIGIBILITY_FIELDS_CONSUMED_BY_FINTECH_SAAS - set(body.keys())
+    assert not missing, f"fintech-saas's ml-client.ts expects these fields on /eligibility: {missing}"
