@@ -10,6 +10,7 @@ from config import settings
 from pipeline.features import compute_features, to_array
 from pipeline.schemas import get_schema
 from models.registry import get_champion
+from ml.explain import compute_shap_top_features
 
 logger = logging.getLogger(__name__)
 
@@ -103,16 +104,12 @@ async def score(request: ScoreRequest):
         )
 
     risk_band = "low" if proba < 0.3 else "medium" if proba < 0.6 else "high"
-    importances = {}
-    if hasattr(champion.estimator, "feature_importances_"):
-        importances = {
-            schema.features[i] if i < len(schema.features) else str(i): float(v)
-            for i, v in enumerate(champion.estimator.feature_importances_)
-        }
-    top_features = [
-        {"feature": k, "value": features.get(k, None), "shap_value": v}
-        for k, v in sorted(importances.items(), key=lambda item: abs(item[1]), reverse=True)[:5]
-    ]
+    # Real per-instance SHAP for *this* applicant's feature values -- not a
+    # global feature_importances_ snapshot that's identical for everyone and
+    # (for calibrated estimators) silently unavailable. See ml/explain.py.
+    top_features = compute_shap_top_features(
+        champion.estimator, X, schema.features, features
+    )
 
     latency_ms = (time.time() - t0) * 1000
 
