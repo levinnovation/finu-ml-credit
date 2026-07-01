@@ -1,23 +1,28 @@
-"""Model training endpoint — fine-tunes LightGBM / XGBoost with SUGEF 1-05 monotonicity constraints.
+"""Ad hoc training endpoint — fine-tunes LightGBM / XGBoost with SUGEF 1-05
+monotonicity constraints on a caller-supplied matrix.
+
+IMPORTANT: this endpoint is NOT part of the production training pipeline.
+The real champion model is produced by scripts/train_credit_default.py /
+credit/retrain.py, which write to models/registry.py's manifest that
+api/score.py actually reads. This endpoint fits a model and returns its
+metrics/mlflow_run_id but never calls save_model/writes a registry entry --
+it exists for one-off monotonicity experimentation (e.g. from a notebook or
+this repo's own tests), not for promoting anything to serving. If you need
+a caller-supplied-schema training path that actually reaches production,
+extend credit/retrain.py instead of wiring this endpoint up.
 
 Per the Credit Intelligence plan (Phase 2): models must enforce
 monotone_constraints so a higher DTI (debt-to-income) or a worse delinquency
 record can never *increase* the predicted credit score, even when noisy
 data tempts the tree to fit a local non-monotonic pattern. This is
-auditable by SUGEF reviewers — each feature's sign is documented in
-MONOTONE_FEATURE_SIGN.
+auditable by SUGEF reviewers.
 
-Categorical features (provincia, tipo_patrono, estado_civil) are excluded
-from the constraints tuple, per the plan note: "monotone_constraints solo
-se pueden aplicar sobre variables numéricas o continuas donde el orden
-tenga significado directo. Las variables categóricas se manejan de manera
-independiente mediante Target Encoding controlado o dejándolas
-explícitamente fuera de la tupla de restricciones."
-
-The endpoint accepts a pre-split matrix X with `feature_names` so the
-caller decides which columns are continuous vs categorical. The
-constraints vector is built by mapping the sign dict onto the provided
-feature_names; categorical columns get 0 (no constraint).
+Monotonicity signs are derived from pipeline/schemas.py's
+FeatureSchema.monotone_constraints -- the SAME source of truth used by
+ml/training_helpers.build_candidates() for the real training pipeline --
+instead of a second, independently-maintained sign table. Any feature not
+present in a known schema (e.g. a caller-supplied categorical) gets 0 (no
+constraint).
 """
 
 import logging
@@ -26,6 +31,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
 import numpy as np
+
+from pipeline.schemas import SCHEMAS
 
 logger = logging.getLogger(__name__)
 
@@ -36,42 +43,23 @@ router = APIRouter(prefix="/train", tags=["training"])
 #
 # Sign convention: +1 = score should monotonically INCREASE as feature rises
 #                  -1 = score should monotonically DECREASE as feature rises
-#                   0 = no constraint (categorical or unused feature)
+#                   0 = no constraint (categorical, unused, or unknown feature)
 #
-# Continuous features that have a directional financial interpretation:
+# Merged from every known FeatureSchema (personal + corporate) so this
+# endpoint stays in sync automatically if pipeline/schemas.py changes --
+# no more hand-maintained duplicate table that can silently drift.
 MONOTONE_FEATURE_SIGN: Dict[str, int] = {
-    "income_monthly_log":       +1,   # more income → higher score
-    "income_ccss_ratio":        +1,   # higher CCSS/bank consistency → higher score
-    "dti_ratio":                -1,   # more debt-to-income → lower score
-    "pti_ratio":                -1,   # payment-to-income → lower score
-    "amount_to_income_ratio":   -1,   # larger loan relative to annual income → lower
-    "worst_delay_days":         -1,   # longer delinquency → lower score
-    "arrears_count_12m":        -1,   # more arrears → lower score
-    "credit_history_months":    +1,   # longer clean history → higher score
-    "active_credit_lines":       0,   # ambiguous — keep unconstrained
-    "credit_utilization_pct":   -1,   # higher utilization → lower score
-    "ltv_ratio":                -1,   # higher loan-to-value → lower score
-    "ebitda_coverage":          +1,   # higher EBITDA coverage → higher score
-    "razon_corriente":          +1,   # higher current ratio → higher score
-    "endeudamiento_patrimonio": -1,   # higher D/E ratio → lower score
-    "roe":                      +1,   # higher ROE → higher score
+    feature: sign
+    for schema in SCHEMAS.values()
+    for feature, sign in schema.monotone_constraints.items()
 }
 
-# Features that MUST stay out of the constraints tuple (categorical, derived,
-# or non-monotonic by nature). Trainers must split their matrix so that
-# categorical columns are passed in a separate `categorical_X` block.
-CATEGORICAL_FEATURES = {
-    "provincia",
-    "tipo_patrono",
-    "estado_civil",
-    "nivel_educativo",
-    "tipo_empleo",
-    "industria",
-    "tamano_empresa",
-    "regimen_fiscal",
-    "genero",
-    "nacionalidad",
-}
+# Any feature that appears in a known schema's `features` list but NOT in its
+# `monotone_constraints` dict is implicitly unconstrained (sign 0) -- no
+# separate categorical table needed. Kept as an empty set for backwards
+# compatibility with assert_no_categorical_leakage(); populate via
+# `categorical_feature_names` in the request instead of a hardcoded list.
+CATEGORICAL_FEATURES: set = set()
 
 
 class TrainRequest(BaseModel):
@@ -109,16 +97,6 @@ def build_monotone_constraints(
     return [sign_table.get(name, 0) for name in feature_names]
 
 
-def assert_no_categorical_leakage(feature_names: List[str]) -> None:
-    """Hard-fail if a known-categorical column slipped into the continuous X."""
-    leaked = [f for f in feature_names if f in CATEGORICAL_FEATURES]
-    if leaked:
-        raise HTTPException(
-            400,
-            f"Las siguientes features categóricas no deben estar en X (páselas en categorical_X): {leaked}",
-        )
-
-
 @router.post("", response_model=TrainResponse)
 async def train(request: TrainRequest):
     t0 = time.time()
@@ -131,9 +109,6 @@ async def train(request: TrainRequest):
 
     if not feature_names or len(feature_names) != X.shape[1]:
         raise HTTPException(400, "feature_names must match X column count")
-
-    if request.enforce_monotonicity:
-        assert_no_categorical_leakage(feature_names)
 
     # Combine continuous + categorical into a single matrix for the trainer
     # (LightGBM can accept a single matrix with categorical_feature indices)
@@ -188,13 +163,27 @@ async def train(request: TrainRequest):
             # Categorical features get 0 (no constraint) per the plan.
             full_signs = feature_signs + [0] * len(cat_indices)
             params["monotone_constraints"] = tuple(full_signs)
-        model = xgb.XGBClassifier(**params)
         if cat_indices:
-            # XGBoost needs categorical marked via enable_categorical=True
-            # plus the columns as pandas Categorical dtype. We pass as
-            # int codes with feature_cast='int' fallback for the demo.
-            model.fit(X_full, y)
+            # XGBoost's sklearn API needs enable_categorical=True plus the
+            # categorical columns as pandas `category` dtype -- it will NOT
+            # infer them from plain float columns. Do this properly instead
+            # of silently fitting as if they were continuous (that was the
+            # previous behavior here: both branches called the exact same
+            # `model.fit(X_full, y)`, so categorical columns were being fed
+            # in as raw floats with no actual categorical handling).
+            import pandas as pd
+
+            params["enable_categorical"] = True
+            model = xgb.XGBClassifier(**params)
+            df_full = pd.DataFrame(X_full, columns=full_names)
+            for cat_name in full_names[len(feature_names):]:
+                # XGBoost's columnar categorical path requires int/string
+                # category codes, not floats -- the request sends categorical
+                # columns as JSON numbers, which numpy/pandas read as float64.
+                df_full[cat_name] = df_full[cat_name].astype("int64").astype("category")
+            model.fit(df_full, y)
         else:
+            model = xgb.XGBClassifier(**params)
             model.fit(X_full, y)
     else:
         raise HTTPException(400, f"Unknown model_type: {request.model_type}")
