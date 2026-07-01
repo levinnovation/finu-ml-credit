@@ -14,26 +14,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/eligibility", tags=["eligibility"])
 
-_model = None
-_model_available = False
-
 
 def get_eligibility_model():
-    global _model, _model_available
-    if _model is not None:
-        return _model
+    """Re-reads the cached pickle on every call (like models/registry.get_champion)
+    rather than caching in a module global, so a retrain (training/train_eligibility_model.py
+    or credit/eligibility_retrain.py) that overwrites the pickle takes effect on the next
+    request without a process restart."""
     from models.eligibility import EligibilityModel
 
     loaded = load_model("eligibility")
     if isinstance(loaded, EligibilityModel):
-        _model = loaded
-        _model_available = True
-        logger.info("Eligibility model loaded")
-    else:
-        _model = EligibilityModel()  # hard-rules-only fallback
-        _model_available = False
-        logger.warning("No trained eligibility model found; serving hard-rules-only fallback")
-    return _model
+        return loaded, True
+    logger.warning("No trained eligibility model found; serving hard-rules-only fallback")
+    return EligibilityModel(), False
 
 
 class EligibilityRequest(BaseModel):
@@ -65,14 +58,14 @@ async def check_eligibility(request: EligibilityRequest):
         credit_data=request.credit_data,
         behavior_data=request.behavior_data,
     )
-    model = get_eligibility_model()
+    model, model_available = get_eligibility_model()
     result = model.predict_one(features)
     return EligibilityResponse(
         eligible=result["eligible"],
         reasons=result["reasons"],
         confidence=result["confidence"],
         source=result["source"],
-        model_available=_model_available,
+        model_available=model_available,
         latency_ms=round((time.time() - t0) * 1000, 1),
         data_source=result["data_source"],
     )

@@ -25,6 +25,8 @@ class CreditRetrainResponse(BaseModel):
     train_rows: Optional[int] = None
     dry_run: Optional[bool] = None
     mlflow_run_id: Optional[str] = None
+    data_source: Optional[str] = None
+    label_provenance: Optional[dict] = None
 
 
 def _check_cron_auth(x_cron_secret: Optional[str]) -> None:
