@@ -40,6 +40,10 @@ class ScoreResponse(BaseModel):
     decision_thresholds: dict = Field(default_factory=dict, description="Model/policy thresholds used for bands")
     feature_values: dict = Field(default_factory=dict, description="Exact feature vector used for serving")
     top_features: list = Field(default_factory=list, description="Top feature contributions when available")
+    data_source: str = Field(
+        default="unknown",
+        description="Provenance of the champion's training data: production_decisions | synthetic_bootstrap | unknown | none",
+    )
 
 
 @router.post("", response_model=ScoreResponse)
@@ -72,6 +76,7 @@ async def score(request: ScoreRequest):
             decision_thresholds=champion.thresholds,
             feature_values=features,
             latency_ms=round((time.time() - t0) * 1000, 1),
+            data_source=champion.data_source,
         )
     try:
         raw = champion.estimator.predict_proba(X)
@@ -94,6 +99,7 @@ async def score(request: ScoreRequest):
             decision_thresholds=champion.thresholds,
             feature_values=features,
             latency_ms=round((time.time() - t0) * 1000, 1),
+            data_source=champion.data_source,
         )
 
     risk_band = "low" if proba < 0.3 else "medium" if proba < 0.6 else "high"
@@ -127,4 +133,5 @@ async def score(request: ScoreRequest):
         feature_values=features,
         top_features=top_features,
         latency_ms=round(latency_ms, 1),
+        data_source=champion.data_source,
     )

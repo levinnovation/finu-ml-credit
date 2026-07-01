@@ -30,6 +30,14 @@ class RegistryModel:
     thresholds: Dict[str, Any]
     loaded: bool = False
     estimator: Any = None
+    # Provenance of the training data behind this model. Callers (api/score.py,
+    # fintech-saas) use this to decide whether a decision should be labeled as
+    # coming from a production-grade model or a synthetic placeholder.
+    # Known values: "production_decisions" (real credit_decisions rows),
+    # "synthetic_bootstrap" (scripts/bootstrap_champion.sh, gate was skipped
+    # or passed on synthetic-only data), "unknown" (manifest predates this
+    # field).
+    data_source: str = "unknown"
 
 
 def registry_path() -> Path:
@@ -52,6 +60,7 @@ def empty_champion() -> RegistryModel:
         thresholds={},
         loaded=False,
         estimator=None,
+        data_source="none",
     )
 
 
@@ -106,6 +115,7 @@ def _model_from_manifest(raw: Optional[Dict[str, Any]], default_stage: str) -> R
         thresholds=raw.get("thresholds", {}),
         loaded=estimator is not None,
         estimator=estimator,
+        data_source=raw.get("data_source", "unknown"),
     )
 
 
@@ -137,6 +147,7 @@ def list_registry_models() -> Dict[str, Any]:
             "metrics": champion.metrics,
             "thresholds": champion.thresholds,
             "loaded": champion.loaded,
+            "data_source": champion.data_source,
         },
         "challenger": None if challenger is None else {
             "name": challenger.name,
@@ -149,6 +160,7 @@ def list_registry_models() -> Dict[str, Any]:
             "metrics": challenger.metrics,
             "thresholds": challenger.thresholds,
             "loaded": challenger.loaded,
+            "data_source": challenger.data_source,
         },
         "models": manifest.get("models", []),
     }
