@@ -52,11 +52,16 @@ def hard_rule_check(features: Dict[str, float]) -> Tuple[bool, List[str]]:
 class EligibilityModel:
     """Hard rules + LightGBM soft classifier for the eligibility gate."""
 
-    def __init__(self, classifier: Optional[object] = None, threshold: float = 0.5):
+    def __init__(self, classifier: Optional[object] = None, threshold: float = 0.5, data_source: str = "none"):
         self.classifier = classifier
         self.threshold = threshold
+        # Provenance of the training data, mirrors models/registry.py's
+        # RegistryModel.data_source so /eligibility and /score expose the
+        # same honesty signal to callers. "none" = no classifier trained yet
+        # (hard-rules-only fallback).
+        self.data_source = data_source
 
-    def fit(self, X: np.ndarray, y: np.ndarray, feature_names: List[str]):
+    def fit(self, X: np.ndarray, y: np.ndarray, feature_names: List[str], data_source: str = "unknown"):
         import lightgbm as lgb
 
         self.feature_names = feature_names
@@ -67,9 +72,11 @@ class EligibilityModel:
             verbose=-1,
         )
         self.classifier.fit(X, y)
+        self.data_source = data_source
         return self
 
     def predict_one(self, features: Dict[str, float]) -> Dict[str, Any]:
+        data_source = getattr(self, "data_source", "none")
         passes_hard, hard_reasons = hard_rule_check(features)
         if not passes_hard:
             return {
@@ -77,6 +84,7 @@ class EligibilityModel:
                 "reasons": hard_reasons,
                 "confidence": 1.0,
                 "source": "hard_rule",
+                "data_source": "none",
             }
 
         if self.classifier is None:
@@ -87,6 +95,7 @@ class EligibilityModel:
                 "reasons": ["no_model_hard_rules_only"],
                 "confidence": 0.5,
                 "source": "hard_rule_fallback",
+                "data_source": "none",
             }
 
         X = np.array([[features.get(name, 0.0) for name in self.feature_names]])
@@ -98,6 +107,7 @@ class EligibilityModel:
             "reasons": reasons,
             "confidence": round(proba_eligible if eligible else 1 - proba_eligible, 4),
             "source": "model",
+            "data_source": data_source,
         }
 
     def save(self, path: str):
