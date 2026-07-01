@@ -109,6 +109,7 @@ def test_score_with_loaded_champion(tmp_path, monkeypatch):
             "artifact_path": str(artifact),
             "metrics": {"roc_auc": 0.75},
             "thresholds": {"low_pd": 0.3, "medium_pd": 0.6},
+            "data_source": "synthetic_bootstrap",
         },
         "challenger": None,
         "models": [],
@@ -139,3 +140,25 @@ def test_score_with_loaded_champion(tmp_path, monkeypatch):
     assert body["model_available"] is True
     assert body["score_0_100"] is not None
     assert body["probability_default"] is not None
+    assert body["data_source"] == "synthetic_bootstrap"
+
+
+def test_score_without_fitted_model_reports_no_data_source(empty_registry_client):
+    """A champion that was never trained/promoted must be tagged data_source='none',
+    not silently omitted -- callers rely on this to distinguish 'no model' from
+    'model trained on placeholder data'."""
+    resp = empty_registry_client.post(
+        "/score",
+        json={
+            "tenant_id": "tenant-1",
+            "cedula": "1-0890-0456",
+            "application": {"monthly_income": 900000, "amount": 3000000, "term_months": 36},
+        },
+    )
+    assert resp.json()["data_source"] == "none"
+
+
+def test_models_reports_data_source_field(empty_registry_client):
+    resp = empty_registry_client.get("/models")
+    body = resp.json()
+    assert body["champion"]["data_source"] == "none"

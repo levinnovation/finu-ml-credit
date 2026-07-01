@@ -120,6 +120,10 @@ def run_credit_retrain(
         "metrics": best["metrics"],
         "thresholds": {"low_pd": 0.30, "medium_pd": 0.60},
         "promotion": best["promotion"],
+        # Real credit_decisions rows, but the label is `final_action == 'decline'`
+        # (a decision proxy), not a verified post-origination default outcome.
+        # See docs/data-schema-cr.md and Fase 3 of the Credit Intelligence plan.
+        "data_source": "production_decisions_proxy_label",
     }
 
     manifest = {"champion": entry, "challenger": None, "models": [entry]}

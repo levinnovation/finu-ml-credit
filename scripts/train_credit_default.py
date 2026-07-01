@@ -34,7 +34,19 @@ def main():
     parser.add_argument("--calibration", choices=["sigmoid", "isotonic"], default="isotonic")
     parser.add_argument("--no-register", action="store_true", help="Skip MLflow Model Registry promotion")
     parser.add_argument("--bootstrap", action="store_true", help="Skip promotion gate (synthetic bootstrap only)")
+    parser.add_argument(
+        "--data-source",
+        default="production_decisions",
+        help=(
+            "Provenance label written to the manifest so /score and downstream "
+            "consumers can tell a production-grade model apart from a synthetic "
+            "placeholder. Ignored (forced to 'synthetic_bootstrap') when "
+            "--bootstrap is set, since that path always skips or overrides the "
+            "promotion gate."
+        ),
+    )
     args = parser.parse_args()
+    data_source = "synthetic_bootstrap" if args.bootstrap else args.data_source
 
     dataset_path = Path(args.dataset)
     df = pd.read_csv(dataset_path)
@@ -78,6 +90,7 @@ def main():
             "artifact_path": str(artifact),
             "metrics": metrics,
             "thresholds": {"low_pd": 0.30, "medium_pd": 0.60},
+            "data_source": data_source,
         })
 
     candidates.sort(key=lambda c: (c["metrics"].get("roc_auc") or 0), reverse=True)

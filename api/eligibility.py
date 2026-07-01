@@ -51,6 +51,10 @@ class EligibilityResponse(BaseModel):
     source: str
     model_available: bool
     latency_ms: float
+    data_source: str = Field(
+        default="none",
+        description="Provenance of the eligibility model's training data: synthetic_v1 | production_decisions | none",
+    )
 
 
 @router.post("", response_model=EligibilityResponse)
@@ -70,4 +74,5 @@ async def check_eligibility(request: EligibilityRequest):
         source=result["source"],
         model_available=_model_available,
         latency_ms=round((time.time() - t0) * 1000, 1),
+        data_source=result["data_source"],
     )
